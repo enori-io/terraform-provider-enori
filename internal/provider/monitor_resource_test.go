@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -136,6 +138,28 @@ func TestApplyClientMonitor_LowercasesTypeAndHandlesNulls(t *testing.T) {
 	}
 	if !model.Port.IsNull() {
 		t.Errorf("nil port should map to Null")
+	}
+}
+
+func TestTypeOneOfValidator(t *testing.T) {
+	ctx := context.Background()
+	v := stringvalidator.OneOf(monitorTypes...)
+
+	for _, ty := range monitorTypes {
+		resp := &validator.StringResponse{}
+		v.ValidateString(ctx, validator.StringRequest{ConfigValue: types.StringValue(ty)}, resp)
+		if resp.Diagnostics.HasError() {
+			t.Errorf("supported type %q should pass validation", ty)
+		}
+	}
+	// PascalCase (the API's own casing) and unsupported types must be rejected at config-validate time —
+	// this is what prevents the "inconsistent result after apply" crash class.
+	for _, bad := range []string{"Website", "WEBSITE", "browser", "apiflow", "ssl", "nope"} {
+		resp := &validator.StringResponse{}
+		v.ValidateString(ctx, validator.StringRequest{ConfigValue: types.StringValue(bad)}, resp)
+		if !resp.Diagnostics.HasError() {
+			t.Errorf("type %q should be rejected by the OneOf validator", bad)
+		}
 	}
 }
 
