@@ -31,10 +31,15 @@ provider "enori" {
 }
 
 resource "enori_monitor" "marketing_site" {
-  name             = "Marketing site"
-  url              = "https://www.example.com"
-  type             = "website"
-  interval_seconds = 60
+  name                 = "Marketing site"
+  url                  = "https://www.example.com"
+  type                 = "website"
+  interval_seconds     = 60
+  expected_status_code = 200
+  expected_keyword     = "Welcome"
+  follow_redirects     = true
+  alert_on_down        = true
+  tags                 = ["production", "marketing"]
 }
 ```
 
@@ -62,10 +67,49 @@ in a `.tf` file or in state/plan output. When set in config, mark it `sensitive`
 
 ## Resources
 
-| Resource         | Status              | Notes                                              |
-| ---------------- | ------------------- | -------------------------------------------------- |
-| `enori_monitor`  | draft (P1)          | MVP attributes: name, group_name, url, type, interval_seconds, timeout_seconds, paused. |
+| Resource              | Status         | Notes                                              |
+| --------------------- | -------------- | -------------------------------------------------- |
+| `enori_monitor`       | pre-alpha (P1) | Common cross-type + HTTP/website + alerting core.  |
 | `enori_alert_channel` | planned (P2)   | email / slack / discord / webhook channels.        |
+
+### `enori_monitor` — argument reference
+
+**Required**
+
+| Argument | Type   | Notes |
+| -------- | ------ | ----- |
+| `name`   | string | Monitor name (1–100 chars). |
+| `url`    | string | Target URL or host. |
+| `type`   | string | One of `website`, `ping`, `port`, `dns`, `domain`, `job` (lowercase). **Immutable** — changing it forces a new monitor. |
+
+**Optional** (the server supplies a default for most; whatever the server stores is read back)
+
+| Argument | Type | Notes |
+| -------- | ---- | ----- |
+| `group_name` | string | Group the monitor belongs to. |
+| `interval_seconds` | number | Check interval (30–31104000). Default 300. |
+| `timeout_seconds` | number | Per-check timeout (5–300). Default 30. |
+| `http_method` | string | e.g. `GET`, `POST`, `HEAD`. Default `GET`. |
+| `expected_status_code` | number | Expected HTTP status (100–599). Default 200. |
+| `expected_keyword` | string | Keyword required in the response body. |
+| `request_body` | string | Body sent with the check. |
+| `custom_user_agent` | string | Custom User-Agent (max 512 chars). |
+| `follow_redirects` | bool | Follow HTTP redirects. Default true. |
+| `port` | number | Target port (1–65535), for port checks. |
+| `ssl_expiry_warning_days` | number | Warn N days before SSL expiry (7/14/30/60). Default 30. |
+| `failure_threshold` | number | Consecutive failures before down (0–10). |
+| `alert_on_down` | bool | Alert when the monitor goes down. Default true. |
+| `alert_on_recovered` | bool | Alert when the monitor recovers. Default true. |
+| `alert_channel_ids` | set(string) | Alert channels to notify. |
+| `tags` | set(string) | Tags (lowercase alphanumeric + hyphens). |
+
+**Computed:** `id` — the Enori monitor id.
+
+> **Partial-update caveat.** The Enori API applies updates as a partial merge, so **removing** an
+> optional argument from your config keeps its last value rather than clearing it — set the argument
+> explicitly (e.g. `expected_keyword = ""`) to change it. Advanced type-specific config (browser
+> steps, ApiFlow, DNS record matching, device emulation, encrypted variables) is **not** yet exposed;
+> see [`docs/DESIGN.md`](docs/DESIGN.md) §2 for the roadmap.
 
 Import an existing monitor by its Enori id:
 

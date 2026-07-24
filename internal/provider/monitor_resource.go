@@ -1,19 +1,34 @@
 package provider
 
 // enori_monitor resource — the flagship P1 resource. STATUS: pre-alpha, compiles clean — see main.go.
-// The attribute set is the MVP subset (name, group_name, url, type, interval_seconds, timeout_seconds,
-// paused). Extend to the full CreateMonitorRequest field set during the Go-verified build (DESIGN.md §2).
+//
+// Scope (v0.1.0): the common cross-type + HTTP/website + alerting core, every field of which round-
+// trips through BOTH CreateMonitorRequest/UpdateMonitorRequest AND the MonitorDto response (verified
+// 2026-07-24) so there is no read-back drift. Deep type-specific config (browser steps, ApiFlow,
+// DNS routing, device emulation, encrypted variables) is intentionally deferred — see DESIGN.md §2.
+//
+// Design notes:
+//   - type is RequiresReplace: UpdateMonitorRequest has no Type field (a monitor's type is immutable).
+//   - Optional fields are Optional+Computed+UseStateForUnknown. The Enori update endpoint is a partial
+//     merge (a null field = "no change") and supplies server-side defaults, so Computed lets the server
+//     be authoritative and avoids perpetual "known after apply" churn. Caveat (documented): removing an
+//     attribute from config keeps its last value rather than clearing it — set it explicitly to change.
+//   - type/status casing: the API returns the PascalCase enum name ("Website"); we lowercase on read so
+//     state matches the lowercase values used in config. Send is case-insensitive on the API side.
 
 import (
 	"context"
 	"fmt"
+	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
@@ -35,14 +50,26 @@ type MonitorResource struct {
 
 // MonitorResourceModel maps the resource schema to a Go type.
 type MonitorResourceModel struct {
-	ID              types.String `tfsdk:"id"`
-	Name            types.String `tfsdk:"name"`
-	GroupName       types.String `tfsdk:"group_name"`
-	URL             types.String `tfsdk:"url"`
-	Type            types.String `tfsdk:"type"`
-	IntervalSeconds types.Int64  `tfsdk:"interval_seconds"`
-	TimeoutSeconds  types.Int64  `tfsdk:"timeout_seconds"`
-	Paused          types.Bool   `tfsdk:"paused"`
+	ID                   types.String `tfsdk:"id"`
+	Name                 types.String `tfsdk:"name"`
+	GroupName            types.String `tfsdk:"group_name"`
+	URL                  types.String `tfsdk:"url"`
+	Type                 types.String `tfsdk:"type"`
+	IntervalSeconds      types.Int64  `tfsdk:"interval_seconds"`
+	TimeoutSeconds       types.Int64  `tfsdk:"timeout_seconds"`
+	HTTPMethod           types.String `tfsdk:"http_method"`
+	ExpectedStatusCode   types.Int64  `tfsdk:"expected_status_code"`
+	ExpectedKeyword      types.String `tfsdk:"expected_keyword"`
+	RequestBody          types.String `tfsdk:"request_body"`
+	CustomUserAgent      types.String `tfsdk:"custom_user_agent"`
+	FollowRedirects      types.Bool   `tfsdk:"follow_redirects"`
+	Port                 types.Int64  `tfsdk:"port"`
+	SslExpiryWarningDays types.Int64  `tfsdk:"ssl_expiry_warning_days"`
+	FailureThreshold     types.Int64  `tfsdk:"failure_threshold"`
+	AlertOnDown          types.Bool   `tfsdk:"alert_on_down"`
+	AlertOnRecovered     types.Bool   `tfsdk:"alert_on_recovered"`
+	AlertChannelIds      types.Set    `tfsdk:"alert_channel_ids"`
+	Tags                 types.Set    `tfsdk:"tags"`
 }
 
 func (r *MonitorResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -50,6 +77,12 @@ func (r *MonitorResource) Metadata(_ context.Context, req resource.MetadataReque
 }
 
 func (r *MonitorResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	// Shared plan modifiers for the Optional+Computed attributes.
+	strKeep := []planmodifier.String{stringplanmodifier.UseStateForUnknown()}
+	intKeep := []planmodifier.Int64{int64planmodifier.UseStateForUnknown()}
+	boolKeep := []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()}
+	setKeep := []planmodifier.Set{setplanmodifier.UseStateForUnknown()}
+
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Manages an Enori uptime monitor.",
 		Attributes: map[string]schema.Attribute{
@@ -59,38 +92,116 @@ func (r *MonitorResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"name": schema.StringAttribute{
-				MarkdownDescription: "Human-readable monitor name.",
+				MarkdownDescription: "Human-readable monitor name (1–100 chars).",
 				Required:            true,
-			},
-			"group_name": schema.StringAttribute{
-				MarkdownDescription: "Optional group the monitor belongs to.",
-				Optional:            true,
 			},
 			"url": schema.StringAttribute{
 				MarkdownDescription: "Target URL or host to monitor.",
 				Required:            true,
 			},
 			"type": schema.StringAttribute{
-				MarkdownDescription: "Monitor type: `website`, `ping`, `port`, `dns`, `domain`, `job`, `browser`, or `apiflow`.",
-				Required:            true,
+				MarkdownDescription: "Monitor type (lowercase): `website`, `ping`, `port`, `dns`, `domain`, or `job`. " +
+					"Changing the type forces a new monitor (the type is immutable).",
+				Required:      true,
+				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
+			},
+			"group_name": schema.StringAttribute{
+				MarkdownDescription: "Optional group the monitor belongs to.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       strKeep,
 			},
 			"interval_seconds": schema.Int64Attribute{
-				MarkdownDescription: "Check interval in seconds. Defaults to `60`.",
+				MarkdownDescription: "Check interval in seconds (30–31104000). Server default: 300.",
 				Optional:            true,
 				Computed:            true,
-				Default:             int64default.StaticInt64(60),
+				PlanModifiers:       intKeep,
 			},
 			"timeout_seconds": schema.Int64Attribute{
-				MarkdownDescription: "Per-check timeout in seconds. Defaults to `30`.",
+				MarkdownDescription: "Per-check timeout in seconds (5–300). Server default: 30.",
 				Optional:            true,
 				Computed:            true,
-				Default:             int64default.StaticInt64(30),
+				PlanModifiers:       intKeep,
 			},
-			"paused": schema.BoolAttribute{
-				MarkdownDescription: "Whether the monitor is paused. Defaults to `false`.",
+			"http_method": schema.StringAttribute{
+				MarkdownDescription: "HTTP method for website checks (e.g. `GET`, `POST`, `HEAD`). Server default: `GET`.",
 				Optional:            true,
 				Computed:            true,
-				Default:             booldefault.StaticBool(false),
+				PlanModifiers:       strKeep,
+			},
+			"expected_status_code": schema.Int64Attribute{
+				MarkdownDescription: "Expected HTTP status code (100–599) for website checks. Server default: 200.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       intKeep,
+			},
+			"expected_keyword": schema.StringAttribute{
+				MarkdownDescription: "Keyword that must appear in the response body (website checks).",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       strKeep,
+			},
+			"request_body": schema.StringAttribute{
+				MarkdownDescription: "Request body sent with the check (e.g. for POST website checks).",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       strKeep,
+			},
+			"custom_user_agent": schema.StringAttribute{
+				MarkdownDescription: "Custom User-Agent header for website checks (max 512 chars).",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       strKeep,
+			},
+			"follow_redirects": schema.BoolAttribute{
+				MarkdownDescription: "Whether to follow HTTP redirects (website checks). Server default: true.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       boolKeep,
+			},
+			"port": schema.Int64Attribute{
+				MarkdownDescription: "Target port (1–65535) for port checks.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       intKeep,
+			},
+			"ssl_expiry_warning_days": schema.Int64Attribute{
+				MarkdownDescription: "Days before SSL expiry to warn (7, 14, 30, or 60). Server default: 30.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       intKeep,
+			},
+			"failure_threshold": schema.Int64Attribute{
+				MarkdownDescription: "Consecutive failures before the monitor is marked down (0–10).",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       intKeep,
+			},
+			"alert_on_down": schema.BoolAttribute{
+				MarkdownDescription: "Send an alert when the monitor goes down. Server default: true.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       boolKeep,
+			},
+			"alert_on_recovered": schema.BoolAttribute{
+				MarkdownDescription: "Send an alert when the monitor recovers. Server default: true.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       boolKeep,
+			},
+			"alert_channel_ids": schema.SetAttribute{
+				MarkdownDescription: "IDs of alert channels to notify.",
+				ElementType:         types.StringType,
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       setKeep,
+			},
+			"tags": schema.SetAttribute{
+				MarkdownDescription: "Tags for organizing and filtering monitors (lowercase alphanumeric + hyphens).",
+				ElementType:         types.StringType,
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers:       setKeep,
 			},
 		},
 	}
@@ -111,32 +222,134 @@ func (r *MonitorResource) Configure(_ context.Context, req resource.ConfigureReq
 	r.client = client
 }
 
-func (m MonitorResourceModel) toClientMonitor() Monitor {
-	return Monitor{
-		ID:              m.ID.ValueString(),
-		Name:            m.Name.ValueString(),
-		GroupName:       m.GroupName.ValueString(),
-		URL:             m.URL.ValueString(),
-		Type:            m.Type.ValueString(),
-		IntervalSeconds: m.IntervalSeconds.ValueInt64(),
-		TimeoutSeconds:  m.TimeoutSeconds.ValueInt64(),
-		Paused:          m.Paused.ValueBool(),
+// ---- framework type <-> pointer helpers ----
+
+func optString(v types.String) *string {
+	if v.IsNull() || v.IsUnknown() {
+		return nil
 	}
+	s := v.ValueString()
+	return &s
 }
 
-func applyClientMonitor(m *MonitorResourceModel, api *Monitor) {
+func optInt64(v types.Int64) *int64 {
+	if v.IsNull() || v.IsUnknown() {
+		return nil
+	}
+	i := v.ValueInt64()
+	return &i
+}
+
+func optBool(v types.Bool) *bool {
+	if v.IsNull() || v.IsUnknown() {
+		return nil
+	}
+	b := v.ValueBool()
+	return &b
+}
+
+func optStringSet(ctx context.Context, v types.Set) ([]string, diag.Diagnostics) {
+	if v.IsNull() || v.IsUnknown() {
+		return nil, nil
+	}
+	var out []string
+	d := v.ElementsAs(ctx, &out, false)
+	return out, d
+}
+
+func strOrNull(v *string) types.String {
+	if v == nil {
+		return types.StringNull()
+	}
+	return types.StringValue(*v)
+}
+
+func int64OrNull(v *int64) types.Int64 {
+	if v == nil {
+		return types.Int64Null()
+	}
+	return types.Int64Value(*v)
+}
+
+func boolOrNull(v *bool) types.Bool {
+	if v == nil {
+		return types.BoolNull()
+	}
+	return types.BoolValue(*v)
+}
+
+func stringSetOrNull(ctx context.Context, s []string) (types.Set, diag.Diagnostics) {
+	if s == nil {
+		s = []string{}
+	}
+	return types.SetValueFrom(ctx, types.StringType, s)
+}
+
+// toClientMonitor builds the wire payload from the plan/state model.
+func toClientMonitor(ctx context.Context, m MonitorResourceModel) (Monitor, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	channels, d := optStringSet(ctx, m.AlertChannelIds)
+	diags.Append(d...)
+	tags, d2 := optStringSet(ctx, m.Tags)
+	diags.Append(d2...)
+
+	return Monitor{
+		ID:                   m.ID.ValueString(),
+		Name:                 m.Name.ValueString(),
+		URL:                  m.URL.ValueString(),
+		Type:                 m.Type.ValueString(),
+		GroupName:            optString(m.GroupName),
+		IntervalSeconds:      optInt64(m.IntervalSeconds),
+		TimeoutSeconds:       optInt64(m.TimeoutSeconds),
+		HTTPMethod:           optString(m.HTTPMethod),
+		ExpectedStatusCode:   optInt64(m.ExpectedStatusCode),
+		ExpectedKeyword:      optString(m.ExpectedKeyword),
+		RequestBody:          optString(m.RequestBody),
+		CustomUserAgent:      optString(m.CustomUserAgent),
+		FollowRedirects:      optBool(m.FollowRedirects),
+		Port:                 optInt64(m.Port),
+		SslExpiryWarningDays: optInt64(m.SslExpiryWarningDays),
+		FailureThreshold:     optInt64(m.FailureThreshold),
+		AlertOnDown:          optBool(m.AlertOnDown),
+		AlertOnRecovered:     optBool(m.AlertOnRecovered),
+		AlertChannelIds:      channels,
+		Tags:                 tags,
+	}, diags
+}
+
+// applyClientMonitor copies the API response back into the model (state). type/status are lowercased
+// so state matches the lowercase values used in config.
+func applyClientMonitor(ctx context.Context, m *MonitorResourceModel, api *Monitor) diag.Diagnostics {
+	var diags diag.Diagnostics
+
 	m.ID = types.StringValue(api.ID)
 	m.Name = types.StringValue(api.Name)
-	if api.GroupName == "" {
-		m.GroupName = types.StringNull()
-	} else {
-		m.GroupName = types.StringValue(api.GroupName)
-	}
 	m.URL = types.StringValue(api.URL)
-	m.Type = types.StringValue(api.Type)
-	m.IntervalSeconds = types.Int64Value(api.IntervalSeconds)
-	m.TimeoutSeconds = types.Int64Value(api.TimeoutSeconds)
-	m.Paused = types.BoolValue(api.Paused)
+	m.Type = types.StringValue(strings.ToLower(api.Type))
+	m.GroupName = strOrNull(api.GroupName)
+	m.IntervalSeconds = int64OrNull(api.IntervalSeconds)
+	m.TimeoutSeconds = int64OrNull(api.TimeoutSeconds)
+	m.HTTPMethod = strOrNull(api.HTTPMethod)
+	m.ExpectedStatusCode = int64OrNull(api.ExpectedStatusCode)
+	m.ExpectedKeyword = strOrNull(api.ExpectedKeyword)
+	m.RequestBody = strOrNull(api.RequestBody)
+	m.CustomUserAgent = strOrNull(api.CustomUserAgent)
+	m.FollowRedirects = boolOrNull(api.FollowRedirects)
+	m.Port = int64OrNull(api.Port)
+	m.SslExpiryWarningDays = int64OrNull(api.SslExpiryWarningDays)
+	m.FailureThreshold = int64OrNull(api.FailureThreshold)
+	m.AlertOnDown = boolOrNull(api.AlertOnDown)
+	m.AlertOnRecovered = boolOrNull(api.AlertOnRecovered)
+
+	channels, d := stringSetOrNull(ctx, api.AlertChannelIds)
+	diags.Append(d...)
+	m.AlertChannelIds = channels
+
+	tags, d2 := stringSetOrNull(ctx, api.Tags)
+	diags.Append(d2...)
+	m.Tags = tags
+
+	return diags
 }
 
 func (r *MonitorResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -146,13 +359,19 @@ func (r *MonitorResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	created, err := r.client.CreateMonitor(ctx, plan.toClientMonitor())
+	payload, d := toClientMonitor(ctx, plan)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	created, err := r.client.CreateMonitor(ctx, payload)
 	if err != nil {
 		resp.Diagnostics.AddError("Error creating monitor", err.Error())
 		return
 	}
 
-	applyClientMonitor(&plan, created)
+	resp.Diagnostics.Append(applyClientMonitor(ctx, &plan, created)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 }
 
@@ -165,12 +384,16 @@ func (r *MonitorResource) Read(ctx context.Context, req resource.ReadRequest, re
 
 	monitor, err := r.client.GetMonitor(ctx, state.ID.ValueString())
 	if err != nil {
-		// TODO (Go-verified build): distinguish 404 → resp.State.RemoveResource(ctx) from transient errors.
+		if err == errNotFound {
+			// The monitor was deleted out-of-band — drop it from state so Terraform re-creates it.
+			resp.State.RemoveResource(ctx)
+			return
+		}
 		resp.Diagnostics.AddError("Error reading monitor", err.Error())
 		return
 	}
 
-	applyClientMonitor(&state, monitor)
+	resp.Diagnostics.Append(applyClientMonitor(ctx, &state, monitor)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
 }
 
@@ -181,13 +404,19 @@ func (r *MonitorResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	updated, err := r.client.UpdateMonitor(ctx, plan.ID.ValueString(), plan.toClientMonitor())
+	payload, d := toClientMonitor(ctx, plan)
+	resp.Diagnostics.Append(d...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	updated, err := r.client.UpdateMonitor(ctx, plan.ID.ValueString(), payload)
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating monitor", err.Error())
 		return
 	}
 
-	applyClientMonitor(&plan, updated)
+	resp.Diagnostics.Append(applyClientMonitor(ctx, &plan, updated)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 }
 

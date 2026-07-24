@@ -2,11 +2,23 @@ package provider
 
 // Minimal Enori public-API client (X-Api-Key auth). STATUS: pre-alpha, compiles clean — see main.go.
 // Base host is api.enori.io (the public REST API), NOT app.enori.io (the dashboard). See DESIGN.md §3.
+//
+// Endpoints (verified against MonitorsController on 2026-07-24):
+//   POST   /api/monitors        Authorize monitors:write  → MonitorDto
+//   GET    /api/monitors/{id}   Authorize monitors:read   → MonitorDto
+//   PUT    /api/monitors/{id}   Authorize monitors:write  → MonitorDto (partial: null field = no change)
+//   DELETE /api/monitors/{id}   Authorize monitors:write
+//
+// Wire notes: the API serializes with camelCase property names + JsonStringEnumConverter, so `type`
+// is the enum member name as a string ("Website"), read case-insensitively (lowercase "website" on
+// send is accepted). Optional fields are POINTERS so a nil omits the field entirely (`omitempty`)
+// while an explicit false/0 is still sent — avoids the classic Go zero-value-vs-omitted ambiguity.
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +26,10 @@ import (
 )
 
 const defaultBaseURL = "https://api.enori.io"
+
+// errNotFound is returned by GetMonitor when the API responds 404, so Read can drop the resource
+// from state (drift-recovery) rather than erroring.
+var errNotFound = errors.New("monitor not found")
 
 // Client is a thin wrapper over the Enori REST API.
 type Client struct {
@@ -33,17 +49,41 @@ func NewClient(baseURL, apiKey string) *Client {
 	}
 }
 
-// Monitor mirrors the Enori MonitorDto / CreateMonitorRequest (src/UpNest.Api/DTOs/MonitorDto.cs).
-// MVP subset — extend to the full field set during the Go-verified build (DESIGN.md §2/§3).
+// Monitor mirrors the Enori CreateMonitorRequest / UpdateMonitorRequest / MonitorDto for the
+// fields the provider manages (the common cross-type + HTTP + alerting core). Optional fields are
+// pointers/slices so nil omits them on the wire. Type-specific advanced config (browser steps,
+// ApiFlow, DNS routing, device emulation, encrypted variables) is intentionally out of scope for
+// v0.1.0 — see DESIGN.md §2.
 type Monitor struct {
-	ID              string `json:"id,omitempty"`
-	Name            string `json:"name"`
-	GroupName       string `json:"groupName,omitempty"`
-	URL             string `json:"url"`
-	Type            string `json:"type"` // "website" | "ping" | "port" | "dns" | "domain" | "job" | "browser" | "apiflow"
-	IntervalSeconds int64  `json:"intervalSeconds"`
-	TimeoutSeconds  int64  `json:"timeoutSeconds,omitempty"`
-	Paused          bool   `json:"paused,omitempty"`
+	// Identity / always present.
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name"`
+	URL  string `json:"url"`
+	// Enum member name as a string ("website" accepted on send; API returns "Website"). Omitted on
+	// update (UpdateMonitorRequest has no Type — type is immutable; the resource marks it RequiresReplace).
+	Type string `json:"type,omitempty"`
+
+	// Response-only (never set on send → omitted).
+	Status   string `json:"status,omitempty"`
+	IsActive *bool  `json:"isActive,omitempty"`
+
+	// Optional / API-defaulted (pointer → nil omits; explicit false/0 is sent).
+	GroupName            *string  `json:"groupName,omitempty"`
+	IntervalSeconds      *int64   `json:"intervalSeconds,omitempty"`
+	TimeoutSeconds       *int64   `json:"timeoutSeconds,omitempty"`
+	HTTPMethod           *string  `json:"httpMethod,omitempty"`
+	ExpectedStatusCode   *int64   `json:"expectedStatusCode,omitempty"`
+	ExpectedKeyword      *string  `json:"expectedKeyword,omitempty"`
+	RequestBody          *string  `json:"requestBody,omitempty"`
+	CustomUserAgent      *string  `json:"customUserAgent,omitempty"`
+	FollowRedirects      *bool    `json:"followRedirects,omitempty"`
+	Port                 *int64   `json:"port,omitempty"`
+	SslExpiryWarningDays *int64   `json:"sslExpiryWarningDays,omitempty"`
+	FailureThreshold     *int64   `json:"failureThreshold,omitempty"`
+	AlertOnDown          *bool    `json:"alertOnDown,omitempty"`
+	AlertOnRecovered     *bool    `json:"alertOnRecovered,omitempty"`
+	AlertChannelIds      []string `json:"alertChannelIds,omitempty"`
+	Tags                 []string `json:"tags,omitempty"`
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
@@ -61,7 +101,9 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 		return err
 	}
 	req.Header.Set("X-Api-Key", c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.httpClient.Do(req)
@@ -70,8 +112,11 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return errNotFound
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(resp.Body)
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
 		return fmt.Errorf("enori API %s %s: HTTP %d: %s", method, path, resp.StatusCode, string(raw))
 	}
 	if out != nil {
@@ -105,5 +150,10 @@ func (c *Client) UpdateMonitor(ctx context.Context, id string, m Monitor) (*Moni
 }
 
 func (c *Client) DeleteMonitor(ctx context.Context, id string) error {
-	return c.do(ctx, http.MethodDelete, "/api/monitors/"+id, nil, nil)
+	err := c.do(ctx, http.MethodDelete, "/api/monitors/"+id, nil, nil)
+	// A monitor already gone is a successful delete from Terraform's perspective.
+	if errors.Is(err, errNotFound) {
+		return nil
+	}
+	return err
 }
