@@ -36,11 +36,30 @@ import (
 )
 
 // monitorTypes is the set of monitor types this provider supports (lowercase). Restricting input to
-// lowercase is what makes the read-time lowercasing of the API's PascalCase response consistent with
+// lowercase is what makes the read-time normalization of the API's PascalCase response consistent with
 // config for the Required (non-Computed) `type` attribute — without it, `type = "Website"` would trip
 // Terraform's "provider produced inconsistent result after apply" check. Browser/ApiFlow are omitted
 // because they require step definitions the provider does not yet model.
 var monitorTypes = []string{"website", "ping", "port", "dns", "domain", "job"}
+
+// legacyTypeAliases map the Enori platform's deprecated monitor-type aliases to the modern type they
+// are unified into. The API can still return these for pre-consolidation monitors (the entity keeps
+// its raw type; MonitorDto.Type is not normalized server-side), so importing such a monitor would
+// otherwise land a value outside monitorTypes and produce a permanent RequiresReplace diff. The
+// platform treats all five as Website behaviourally, so mapping them to "website" is correct.
+var legacyTypeAliases = map[string]string{
+	"http": "website", "api": "website", "ssl": "website", "https": "website", "reputation": "website",
+}
+
+// normalizeMonitorType lowercases the API's type string and folds legacy aliases into their modern
+// equivalent, so state always matches the lowercase, non-legacy values the config schema allows.
+func normalizeMonitorType(apiType string) string {
+	t := strings.ToLower(apiType)
+	if modern, ok := legacyTypeAliases[t]; ok {
+		return modern
+	}
+	return t
+}
 
 // Ensure the resource satisfies the framework interfaces.
 var (
@@ -338,7 +357,7 @@ func applyClientMonitor(ctx context.Context, m *MonitorResourceModel, api *Monit
 	m.ID = types.StringValue(api.ID)
 	m.Name = types.StringValue(api.Name)
 	m.URL = types.StringValue(api.URL)
-	m.Type = types.StringValue(strings.ToLower(api.Type))
+	m.Type = types.StringValue(normalizeMonitorType(api.Type))
 	m.GroupName = strOrNull(api.GroupName)
 	m.IntervalSeconds = int64OrNull(api.IntervalSeconds)
 	m.TimeoutSeconds = int64OrNull(api.TimeoutSeconds)

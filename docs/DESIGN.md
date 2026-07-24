@@ -73,9 +73,12 @@ The public site advertises a Terraform provider in **4 places** (FeaturesSection
   they are large, type-specific sub-objects; shipping a clean core first is more valuable than a
   half-modelled everything. Roadmapped for later versions.
 - **`type` restricted to the 6 basic types** (`website`, `ping`, `port`, `dns`, `domain`, `job`) via a
-  `OneOf` validator. Browser/ApiFlow are excluded because they require step definitions the provider
-  does not model yet. Importing a Browser/ApiFlow monitor will populate state, but its `type` cannot be
-  expressed in config until those types are supported.
+  `OneOf` validator. The five deprecated aliases the API may still return for old monitors
+  (`http`/`api`/`ssl`/`https`/`reputation`) are **folded to `website`** on read (they are unified into
+  Website behaviourally), so importing a legacy-type monitor works cleanly. Browser/ApiFlow are excluded
+  because they require step definitions the provider does not model yet — importing one populates state
+  but its `type` cannot be expressed in config until those types are supported (a `terraform import` of a
+  Browser/ApiFlow monitor is therefore not recommended in v0.1.0).
 - **Partial-update can't-clear caveat.** The Enori update endpoint is a partial merge (a null field =
   "no change"), so *removing* an optional argument from config keeps its last value. Set the argument
   explicitly (e.g. `expected_keyword = ""`, `tags = []`) to change/clear it. Documented in the README.

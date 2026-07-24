@@ -139,6 +139,25 @@ func TestApplyClientMonitor_LowercasesTypeAndHandlesNulls(t *testing.T) {
 	}
 }
 
+func TestNormalizeMonitorType(t *testing.T) {
+	cases := map[string]string{
+		"Website":    "website", // PascalCase → lowercase
+		"website":    "website",
+		"DNS":        "dns",
+		"Ssl":        "website", // legacy alias → modern
+		"Https":      "website",
+		"Http":       "website",
+		"Api":        "website",
+		"Reputation": "website",
+		"Ping":       "ping",
+	}
+	for in, want := range cases {
+		if got := normalizeMonitorType(in); got != want {
+			t.Errorf("normalizeMonitorType(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestStringSetRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	set, diags := stringSetOrNull(ctx, []string{"a", "b"})
