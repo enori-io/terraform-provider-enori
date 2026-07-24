@@ -15,7 +15,7 @@ The Enori provider manages uptime monitors and alert channels via the Enori publ
 terraform {
   required_providers {
     enori = {
-      source  = "hpatsev/enori"
+      source  = "enori-io/enori"
       version = "~> 0.1"
     }
   }

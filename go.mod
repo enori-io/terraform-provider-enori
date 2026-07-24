@@ -1,4 +1,4 @@
-module github.com/hpatsev/terraform-provider-enori
+module github.com/enori-io/terraform-provider-enori
 
 go 1.21
 

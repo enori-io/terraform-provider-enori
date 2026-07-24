@@ -10,8 +10,8 @@ import (
 	"flag"
 	"log"
 
+	"github.com/enori-io/terraform-provider-enori/internal/provider"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
-	"github.com/hpatsev/terraform-provider-enori/internal/provider"
 )
 
 // version is set by the release build (GoReleaser ldflags); "dev" for local runs.
@@ -23,8 +23,8 @@ func main() {
 	flag.Parse()
 
 	err := providerserver.Serve(context.Background(), provider.New(version), providerserver.ServeOpts{
-		// Must match the Terraform Registry source address: registry.terraform.io/hpatsev/enori
-		Address: "registry.terraform.io/hpatsev/enori",
+		// Must match the Terraform Registry source address: registry.terraform.io/enori-io/enori
+		Address: "registry.terraform.io/enori-io/enori",
 		Debug:   debug,
 	})
 	if err != nil {

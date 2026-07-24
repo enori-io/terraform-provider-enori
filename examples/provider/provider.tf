@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     enori = {
-      source  = "hpatsev/enori"
+      source  = "enori-io/enori"
       version = "~> 0.1"
     }
   }

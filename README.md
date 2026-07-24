@@ -19,7 +19,7 @@ HCL and manage them through the Enori public REST API. It is built on the
 terraform {
   required_providers {
     enori = {
-      source  = "hpatsev/enori"
+      source  = "enori-io/enori"
       version = "~> 0.1"
     }
   }
@@ -138,7 +138,7 @@ go vet ./...
    compiler flags (the code was written without a local Go toolchain).
 2. Flesh out `enori_monitor` to the full `CreateMonitorRequest` attribute set (see
    [`docs/DESIGN.md`](docs/DESIGN.md) §2) and add acceptance tests.
-3. Create a [Terraform Registry](https://registry.terraform.io) account under `hpatsev` and
+3. Create a [Terraform Registry](https://registry.terraform.io) account under `enori-io` and
    connect this GitHub repo.
 4. Generate a GPG signing key, add the **private** key + passphrase as the `GPG_PRIVATE_KEY`
    / `PASSPHRASE` repo secrets, and register the **public** key in the Registry.
