@@ -2,7 +2,10 @@ module github.com/hpatsev/terraform-provider-enori
 
 go 1.21
 
-require github.com/hashicorp/terraform-plugin-framework v1.11.0
+require (
+	github.com/hashicorp/terraform-plugin-framework v1.11.0
+	github.com/hashicorp/terraform-plugin-framework-validators v0.13.0
+)
 
 require (
 	github.com/fatih/color v1.13.0 // indirect

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -42,6 +43,9 @@ func NewClient(baseURL, apiKey string) *Client {
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
+	// Trim a trailing slash so `endpoint = "https://api.enori.io/"` doesn't produce `//api/monitors`
+	// (ASP.NET routing does not collapse repeated slashes → every request would 404).
+	baseURL = strings.TrimRight(baseURL, "/")
 	return &Client{
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		baseURL:    baseURL,
@@ -68,22 +72,25 @@ type Monitor struct {
 	IsActive *bool  `json:"isActive,omitempty"`
 
 	// Optional / API-defaulted (pointer → nil omits; explicit false/0 is sent).
-	GroupName            *string  `json:"groupName,omitempty"`
-	IntervalSeconds      *int64   `json:"intervalSeconds,omitempty"`
-	TimeoutSeconds       *int64   `json:"timeoutSeconds,omitempty"`
-	HTTPMethod           *string  `json:"httpMethod,omitempty"`
-	ExpectedStatusCode   *int64   `json:"expectedStatusCode,omitempty"`
-	ExpectedKeyword      *string  `json:"expectedKeyword,omitempty"`
-	RequestBody          *string  `json:"requestBody,omitempty"`
-	CustomUserAgent      *string  `json:"customUserAgent,omitempty"`
-	FollowRedirects      *bool    `json:"followRedirects,omitempty"`
-	Port                 *int64   `json:"port,omitempty"`
-	SslExpiryWarningDays *int64   `json:"sslExpiryWarningDays,omitempty"`
-	FailureThreshold     *int64   `json:"failureThreshold,omitempty"`
-	AlertOnDown          *bool    `json:"alertOnDown,omitempty"`
-	AlertOnRecovered     *bool    `json:"alertOnRecovered,omitempty"`
-	AlertChannelIds      []string `json:"alertChannelIds,omitempty"`
-	Tags                 []string `json:"tags,omitempty"`
+	GroupName            *string `json:"groupName,omitempty"`
+	IntervalSeconds      *int64  `json:"intervalSeconds,omitempty"`
+	TimeoutSeconds       *int64  `json:"timeoutSeconds,omitempty"`
+	HTTPMethod           *string `json:"httpMethod,omitempty"`
+	ExpectedStatusCode   *int64  `json:"expectedStatusCode,omitempty"`
+	ExpectedKeyword      *string `json:"expectedKeyword,omitempty"`
+	RequestBody          *string `json:"requestBody,omitempty"`
+	CustomUserAgent      *string `json:"customUserAgent,omitempty"`
+	FollowRedirects      *bool   `json:"followRedirects,omitempty"`
+	Port                 *int64  `json:"port,omitempty"`
+	SslExpiryWarningDays *int64  `json:"sslExpiryWarningDays,omitempty"`
+	FailureThreshold     *int64  `json:"failureThreshold,omitempty"`
+	AlertOnDown          *bool   `json:"alertOnDown,omitempty"`
+	AlertOnRecovered     *bool   `json:"alertOnRecovered,omitempty"`
+	// Pointer-to-slice (not plain []string) so a nil pointer omits the field while a non-nil pointer
+	// to an EMPTY slice sends `[]` — the API's partial-merge treats an omitted field as "no change",
+	// so a plain []string+omitempty would make clearing tags/channels impossible (they'd never send []).
+	AlertChannelIds *[]string `json:"alertChannelIds,omitempty"`
+	Tags            *[]string `json:"tags,omitempty"`
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {

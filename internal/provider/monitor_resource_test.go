@@ -2,6 +2,8 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -147,7 +149,7 @@ func TestStringSetRoundTrip(t *testing.T) {
 	if diags.HasError() {
 		t.Fatalf("unexpected diags: %v", diags)
 	}
-	if len(back) != 2 || back[0] != "a" || back[1] != "b" {
+	if back == nil || len(*back) != 2 || (*back)[0] != "a" || (*back)[1] != "b" {
 		t.Fatalf("set round-trip mismatch: %v", back)
 	}
 
@@ -158,5 +160,51 @@ func TestStringSetRoundTrip(t *testing.T) {
 	}
 	if empty.IsNull() {
 		t.Error("nil slice should map to an empty (non-null) set")
+	}
+}
+
+func TestOptStringSet_NullVsEmpty(t *testing.T) {
+	ctx := context.Background()
+
+	// Null set → nil pointer → field omitted on the wire ("no change").
+	got, _ := optStringSet(ctx, types.SetNull(types.StringType))
+	if got != nil {
+		t.Errorf("null set should map to nil pointer (omit), got %v", *got)
+	}
+
+	// Explicit empty set → NON-nil pointer to empty slice → sends `[]` (clears the value).
+	emptySet, d := types.SetValueFrom(ctx, types.StringType, []string{})
+	if d.HasError() {
+		t.Fatalf("unexpected diags: %v", d)
+	}
+	got2, _ := optStringSet(ctx, emptySet)
+	if got2 == nil {
+		t.Fatal("explicit empty set must map to a non-nil pointer so `[]` is sent (clear), not omitted")
+	}
+	if len(*got2) != 0 {
+		t.Errorf("expected empty slice, got %v", *got2)
+	}
+}
+
+// TestMonitorJSON_EmptySetClears is the regression guard for the P0 the reviewer caught: an explicit
+// empty tags/channels set MUST serialize to `[]` (clear), while an unset one MUST be omitted.
+func TestMonitorJSON_EmptySetClears(t *testing.T) {
+	empty := []string{}
+	withEmpty := Monitor{Name: "x", URL: "y", Type: "website", Tags: &empty}
+	b, err := json.Marshal(withEmpty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"tags":[]`) {
+		t.Errorf("explicit empty tags must serialize to `\"tags\":[]` (clear); got %s", b)
+	}
+
+	unset := Monitor{Name: "x", URL: "y", Type: "website", Tags: nil}
+	b2, err := json.Marshal(unset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b2), `"tags"`) {
+		t.Errorf("unset tags must be omitted from the wire; got %s", b2)
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -30,8 +31,16 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
+
+// monitorTypes is the set of monitor types this provider supports (lowercase). Restricting input to
+// lowercase is what makes the read-time lowercasing of the API's PascalCase response consistent with
+// config for the Required (non-Computed) `type` attribute — without it, `type = "Website"` would trip
+// Terraform's "provider produced inconsistent result after apply" check. Browser/ApiFlow are omitted
+// because they require step definitions the provider does not yet model.
+var monitorTypes = []string{"website", "ping", "port", "dns", "domain", "job"}
 
 // Ensure the resource satisfies the framework interfaces.
 var (
@@ -104,6 +113,7 @@ func (r *MonitorResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 					"Changing the type forces a new monitor (the type is immutable).",
 				Required:      true,
 				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Validators:    []validator.String{stringvalidator.OneOf(monitorTypes...)},
 			},
 			"group_name": schema.StringAttribute{
 				MarkdownDescription: "Optional group the monitor belongs to.",
@@ -248,13 +258,16 @@ func optBool(v types.Bool) *bool {
 	return &b
 }
 
-func optStringSet(ctx context.Context, v types.Set) ([]string, diag.Diagnostics) {
+// optStringSet returns nil for an unset (null/unknown) Set so the field is omitted, but a NON-NIL
+// pointer (to a possibly-empty slice) for a set the user provided — including an explicit empty set,
+// so `tags = []` sends `[]` and actually clears the value rather than being a silent no-op.
+func optStringSet(ctx context.Context, v types.Set) (*[]string, diag.Diagnostics) {
 	if v.IsNull() || v.IsUnknown() {
 		return nil, nil
 	}
-	var out []string
+	out := []string{}
 	d := v.ElementsAs(ctx, &out, false)
-	return out, d
+	return &out, d
 }
 
 func strOrNull(v *string) types.String {
@@ -341,15 +354,22 @@ func applyClientMonitor(ctx context.Context, m *MonitorResourceModel, api *Monit
 	m.AlertOnDown = boolOrNull(api.AlertOnDown)
 	m.AlertOnRecovered = boolOrNull(api.AlertOnRecovered)
 
-	channels, d := stringSetOrNull(ctx, api.AlertChannelIds)
+	channels, d := stringSetOrNull(ctx, derefSlice(api.AlertChannelIds))
 	diags.Append(d...)
 	m.AlertChannelIds = channels
 
-	tags, d2 := stringSetOrNull(ctx, api.Tags)
+	tags, d2 := stringSetOrNull(ctx, derefSlice(api.Tags))
 	diags.Append(d2...)
 	m.Tags = tags
 
 	return diags
+}
+
+func derefSlice(v *[]string) []string {
+	if v == nil {
+		return nil
+	}
+	return *v
 }
 
 func (r *MonitorResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
