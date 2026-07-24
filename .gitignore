@@ -1,0 +1,38 @@
+# Go build output
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+terraform-provider-enori
+dist/
+
+# Test binaries / coverage
+*.test
+*.out
+coverage.txt
+
+# Go workspace
+go.work
+go.work.sum
+
+# Terraform local state / plugin cache (from manual testing)
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Local override for dev-overrides testing
+.terraformrc
+terraform.rc
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Secrets — never commit
+*.gpg
+*.pem
