@@ -2,10 +2,10 @@
 
 Manage your [Enori](https://enori.io) uptime monitors as code.
 
-> **⚠️ Status: scaffold / pre-alpha (2026-07-24).** The repository structure, CI, and a
-> first-draft `enori_monitor` resource are in place, but the Go code has **not yet been
-> compiled** (it was authored without a local Go toolchain). It is **not** published to the
-> Terraform Registry yet. See [Building](#building) for what remains before a `v0.1.0` release.
+> **⚠️ Status: pre-alpha (2026-07-24).** The repository structure, CI, and a first-draft
+> `enori_monitor` resource are in place and **compile + `go vet` clean** on go1.26. Remaining
+> before `v0.1.0`: flesh `enori_monitor` out to the full attribute set, add acceptance tests,
+> and **publish to the Terraform Registry** (not yet published). See [Building](#building).
 
 ## Overview
 

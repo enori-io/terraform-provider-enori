@@ -1,6 +1,6 @@
 package provider
 
-// Enori provider definition. STATUS: first-draft, uncompiled — see main.go.
+// Enori provider definition. STATUS: pre-alpha, compiles clean — see main.go.
 
 import (
 	"context"

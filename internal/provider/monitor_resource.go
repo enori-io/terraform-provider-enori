@@ -1,6 +1,6 @@
 package provider
 
-// enori_monitor resource — the flagship P1 resource. STATUS: first-draft, uncompiled — see main.go.
+// enori_monitor resource — the flagship P1 resource. STATUS: pre-alpha, compiles clean — see main.go.
 // The attribute set is the MVP subset (name, group_name, url, type, interval_seconds, timeout_seconds,
 // paused). Extend to the full CreateMonitorRequest field set during the Go-verified build (DESIGN.md §2).
 
@@ -11,8 +11,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"

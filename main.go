@@ -1,8 +1,8 @@
 // Terraform provider for Enori — entry point.
 //
-// STATUS: first-draft scaffold (2026-07-24). Authored without a local Go toolchain, so it is
-// NOT yet compiled — the first build task once Go is installed is `go mod tidy && go build ./... &&
-// go vet ./...`, then fix anything the compiler flags. See docs/DESIGN.md §5 (P1).
+// STATUS: pre-alpha (2026-07-24). Compiles + `go vet`s clean on go1.26. Remaining before v0.1.0:
+// flesh enori_monitor out to the full CreateMonitorRequest field set (docs/DESIGN.md §2), add
+// acceptance tests, then publish to the Terraform Registry (docs/DESIGN.md §5).
 package main
 
 import (

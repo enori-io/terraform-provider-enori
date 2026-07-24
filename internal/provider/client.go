@@ -1,6 +1,6 @@
 package provider
 
-// Minimal Enori public-API client (X-Api-Key auth). STATUS: first-draft, uncompiled — see main.go.
+// Minimal Enori public-API client (X-Api-Key auth). STATUS: pre-alpha, compiles clean — see main.go.
 // Base host is api.enori.io (the public REST API), NOT app.enori.io (the dashboard). See DESIGN.md §3.
 
 import (
