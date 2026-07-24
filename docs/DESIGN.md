@@ -64,3 +64,22 @@ Follows `docs/terraform-provider-prompt.md`; each phase = its own PR on the new 
 ## 6. Marketing reconciliation
 
 The public site advertises a Terraform provider in **4 places** (FeaturesSection, PublicFooter, PricingTable, landing). Building this makes the claim honest — no marketing change needed once P1–P3 ship and the Registry listing is live. (The alternative — pulling the claims — was rejected by Hristo.)
+
+## 7. Known limitations (v0.1.0) — deferred, with reasons
+
+- **Advanced type-specific config not modeled.** `enori_monitor` covers the common cross-type +
+  HTTP/website + alerting core (see README argument reference). Browser steps, ApiFlow steps, DNS
+  record matching / routing, device emulation, and encrypted variables are **not** exposed. Reason:
+  they are large, type-specific sub-objects; shipping a clean core first is more valuable than a
+  half-modelled everything. Roadmapped for later versions.
+- **`type` restricted to the 6 basic types** (`website`, `ping`, `port`, `dns`, `domain`, `job`) via a
+  `OneOf` validator. Browser/ApiFlow are excluded because they require step definitions the provider
+  does not model yet. Importing a Browser/ApiFlow monitor will populate state, but its `type` cannot be
+  expressed in config until those types are supported.
+- **Partial-update can't-clear caveat.** The Enori update endpoint is a partial merge (a null field =
+  "no change"), so *removing* an optional argument from config keeps its last value. Set the argument
+  explicitly (e.g. `expected_keyword = ""`, `tags = []`) to change/clear it. Documented in the README.
+- **`Update` on a 404 returns a generic error** rather than dropping the resource from state (the way
+  `Read`/`Delete` do). Reason (deferred P2 from the 2026-07-24 code review): this only occurs when a
+  monitor is deleted out-of-band *within a single apply window* (a rare race), and erroring rather than
+  silently recreating is a defensible, common provider choice. Revisit if it surfaces in practice.
