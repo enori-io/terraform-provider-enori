@@ -4,7 +4,9 @@ All notable changes to the Enori Terraform provider are documented here. The for
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.0] - 2026-07-25
+
+First release published to the Terraform Registry as `enori-io/enori`.
 
 ### Added
 
@@ -22,4 +24,4 @@ All notable changes to the Enori Terraform provider are documented here. The for
 - Updates are a partial merge: removing an optional argument keeps its last value — set it explicitly to
   change or clear it (e.g. `tags = []`). See the README for the full argument reference and caveats.
 
-_No released versions yet. `v0.1.0` will be the first tag published to the Terraform Registry._
+[0.1.0]: https://github.com/enori-io/terraform-provider-enori/releases/tag/v0.1.0
