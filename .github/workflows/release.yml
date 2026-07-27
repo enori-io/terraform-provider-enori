@@ -39,3 +39,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
+          # Fed to gpg on stdin via the signs.stdin hook in .goreleaser.yml — CI has no tty for a prompt.
+          GPG_PASSPHRASE: ${{ secrets.PASSPHRASE }}

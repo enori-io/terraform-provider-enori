@@ -44,13 +44,20 @@ signs:
   - artifacts: checksum
     args:
       # GPG signing requires the GPG_FINGERPRINT env var + an imported key (see release.yml).
+      # --pinentry-mode loopback + --passphrase-fd 0 let gpg read the passphrase from stdin instead
+      # of trying to open a terminal prompt — CI has no tty ("Inappropriate ioctl for device").
       - "--batch"
+      - "--pinentry-mode"
+      - "loopback"
+      - "--passphrase-fd"
+      - "0"
       - "--local-user"
       - "{{ .Env.GPG_FINGERPRINT }}"
       - "--output"
       - "${signature}"
       - "--detach-sign"
       - "${artifact}"
+    stdin: "{{ .Env.GPG_PASSPHRASE }}"
 
 release:
   extra_files:
